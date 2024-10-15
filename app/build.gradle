@@ -30,6 +30,7 @@ android {
 
 dependencies {
     implementation 'com.google.android.gms:play-services-measurement-base:22.1.2'
+    implementation 'com.google.android.gms:play-services-location:21.3.0'
     implementation 'com.google.ar:core:1.46.0'
     implementation libs.appcompat
     implementation libs.material

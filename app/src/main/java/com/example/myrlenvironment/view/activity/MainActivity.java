@@ -1,11 +1,14 @@
 package com.example.myrlenvironment.view.activity;
 
+import com.example.myrlenvironment.model.geometry.DepthData;
+import com.example.myrlenvironment.model.geometry.Triangle;
+import com.example.myrlenvironment.view.renderer.Renderer;
 import com.example.myrlenvironment.view.utils.Util;
 
 import android.content.pm.PackageManager;
+import android.media.Image;
 import android.os.Bundle;
 import android.os.Handler;
-import android.os.Looper;
 import android.util.Log;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -13,35 +16,35 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.example.myrlenvironment.R;
-import com.google.android.filament.IndexBuffer;
-import com.google.android.filament.VertexBuffer;
 import com.google.ar.core.ArCoreApk;
 import com.google.ar.core.Config;
+import com.google.ar.core.Frame;
 import com.google.ar.core.Pose;
 import com.google.ar.core.Session;
-import com.google.ar.core.StreetscapeGeometry;
+import com.google.ar.core.TrackingState;
 import com.google.ar.core.exceptions.CameraNotAvailableException;
+import com.google.ar.core.exceptions.NotYetAvailableException;
 import com.google.ar.core.exceptions.UnavailableApkTooOldException;
 import com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException;
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException;
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException;
 import com.google.ar.sceneform.ArSceneView;
+import com.google.ar.sceneform.FrameTime;
 import com.google.ar.sceneform.Node;
 import com.google.ar.sceneform.math.Quaternion;
 import com.google.ar.sceneform.math.Vector3;
 import com.google.ar.sceneform.rendering.Color;
+import com.google.ar.sceneform.rendering.Material;
 import com.google.ar.sceneform.rendering.MaterialFactory;
-import com.google.ar.sceneform.rendering.ModelRenderable;
-import com.google.ar.sceneform.rendering.Renderable;
-import com.google.ar.sceneform.rendering.RenderableDefinition;
 import com.google.ar.sceneform.rendering.ShapeFactory;
-import com.google.ar.sceneform.rendering.Vertex;
-import com.google.ar.sceneform.ux.TransformableNode;
 
+import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
     private static final int CAMERA_PERMISSION_CODE = 100;
@@ -70,49 +73,24 @@ public class MainActivity extends AppCompatActivity {
             throw new RuntimeException(e);
         }
 
-        Config arConfig = new Config(arSession);
+        Config arConfig = arSession.getConfig();
         arConfig.setUpdateMode(Config.UpdateMode.LATEST_CAMERA_IMAGE);
         arConfig.setGeospatialMode(Config.GeospatialMode.ENABLED);
-        arConfig.setStreetscapeGeometryMode(Config.StreetscapeGeometryMode.ENABLED);
+        if (arSession.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+            // Enable depth mode.
+            Log.d("AR", "Depth mode is supported.");
+            arConfig.setDepthMode(Config.DepthMode.AUTOMATIC);
+        }
+//        arConfig.setStreetscapeGeometryMode(Config.StreetscapeGeometryMode.ENABLED);
         arSession.configure(arConfig);
 
         // Set up the AR session
         if (arSession != null) {
             arSceneView.setupSession(arSession);
         }
+        arSceneView.getScene().addOnUpdateListener(this::onUpdateFrame);
 
-        Handler handler = new Handler(Looper.getMainLooper());
-        // Post the runnable again after the specified interval
-        Runnable captureSceneRunnable = new Runnable() {
-            @Override
-            public void run() {
-                // TODO: Capture the scene and display the mesh on screen
-                if (arSession != null) {
-                    // Retrieve Streetscape Geometry (surface mesh data)
-                    Collection<StreetscapeGeometry> geometries = arSession.getAllTrackables(StreetscapeGeometry.class);
-
-                    // Iterate through each StreetscapeGeometry and handle the surface mesh data
-                    for (StreetscapeGeometry geometry : geometries) {
-                        // Get the pose of the geometry in the world
-                        Pose pose = geometry.getMeshPose();
-
-                        // Retrieve the mesh data from StreetscapeGeometry
-                        FloatBuffer verticesBuffer = geometry.getMesh().getVertexList();
-                        IntBuffer indicesBuffer = geometry.getMesh().getIndexList();
-
-                        // Create a custom renderable with the ARCore mesh
-                        createMeshRenderable(verticesBuffer, indicesBuffer, pose);
-                    }
-
-                    // Schedule the next frame capture
-                    handler.postDelayed(this, 500);
-                }
-            }
-        };
-
-        // Start the logging process
-        handler.post(captureSceneRunnable);
-
+//        testRenderable();
     }
 
     @Override
@@ -135,14 +113,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // Function to check and request permission
-    public void checkPermission(String permission, int requestCode) {
-        // Checking if permission is not granted
-        if (ContextCompat.checkSelfPermission(MainActivity.this, permission) == PackageManager.PERMISSION_DENIED) {
-            ActivityCompat.requestPermissions(MainActivity.this, new String[] { permission }, requestCode);
-        }
-    }
-
     @Override
     protected void onDestroy() {
         super.onDestroy();
@@ -155,51 +125,49 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // Method to create and render the mesh as a Sceneform renderable
-    protected void createMeshRenderable(FloatBuffer verticesBuffer, IntBuffer indicesBuffer, Pose pose) {
-        // Convert vertices and normals into Sceneform's Vertex format
-        Vertex[] vertices = Util.createVertexList(verticesBuffer);
-//        IndexBuffer indexBuffer = new IndexBuffer(indicesBuffer);
-
-        RenderableDefinition renderableDefinition = RenderableDefinition.builder()
-                .setVertices(Arrays.asList(vertices))
-                .build();
-
-        // Create the Renderable
-        ModelRenderable.builder()
-                .setSource(renderableDefinition)
-                .build()
-                .thenAccept(renderable -> {
-                    // Position the renderable based on the ARCore geometry pose
-                    addRenderableToScene(renderable, pose);
-                });
-    }
-
-    // Method to add the Renderable to the AR scene at the correct location
-    private void addRenderableToScene(Renderable renderable, Pose pose) {
-        // Create a new Node to represent the mesh
-        Node node = new Node();
-
-        // Set the node's position and rotation from the ARCore pose
-        node.setWorldPosition(new Vector3(pose.tx(), pose.ty(), pose.tz()));
-        node.setWorldRotation(new Quaternion(pose.qx(), pose.qy(), pose.qz(), pose.qw()));
-
-        // Attach the renderable to the node
-        node.setRenderable(renderable);
-
-        // Add the node to the scene
-        arSceneView.getScene().addChild(node);
-    }
-
-    private void testRenderable() {
+    private void testRenderable(float radius, Vector3 pos) {
         Node redSphereNode = new Node();
-        MaterialFactory.makeOpaqueWithColor(this, new Color(android.graphics.Color.RED))
+        MaterialFactory.makeOpaqueWithColor(this, new Color(android.graphics.Color.GREEN))
                 .thenAccept(
                         material -> {
                             redSphereNode.setRenderable(
-                                    ShapeFactory.makeSphere(0.1f, new Vector3(0.0f, 0.0f, -1f), material)
+                                    ShapeFactory.makeSphere(radius, pos, material)
                             );
                         });
         arSceneView.getScene().addChild(redSphereNode);
+    }
+
+    public void onUpdateFrame(FrameTime frameTime) {
+        if (arSceneView == null || arSession == null) {
+            return;
+        }
+
+        Frame frame;
+        try {
+            frame = arSession.update();
+        } catch (CameraNotAvailableException e) {
+            throw new RuntimeException(e);
+        }
+
+        // Process the point cloud data
+        if (frame.getCamera().getTrackingState() == TrackingState.TRACKING) {
+            FloatBuffer points = DepthData.create(frame, arSession.createAnchor(frame.getCamera().getPose()));
+            if (points == null) {
+                return;
+            }
+            List<Vector3> pointList = Util.convertFloatBufferToVector3List(points);
+            for (Vector3 point : pointList) {
+                // TODO: Do something here
+//                testRenderable(0.001f, point);
+            }
+        }
+    }
+
+    // Function to check and request permission
+    public void checkPermission(String permission, int requestCode) {
+        // Checking if permission is not granted
+        if (ContextCompat.checkSelfPermission(MainActivity.this, permission) == PackageManager.PERMISSION_DENIED) {
+            ActivityCompat.requestPermissions(MainActivity.this, new String[] { permission }, requestCode);
+        }
     }
 }
